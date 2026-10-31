@@ -1,0 +1,36 @@
+# Self-hosted n8n for LendLoop. Start with:  docker compose up -d
+# Config comes from .env.n8n (copy .env.n8n.example). No secrets live in this file.
+services:
+  n8n:
+    image: n8nio/n8n:1.123.91 # pinned; 1.x line matches the exported workflow JSON
+    container_name: lendloop-n8n
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678" # bound to localhost only
+    env_file:
+      - .env.n8n
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-UTC}
+      - TZ=${GENERIC_TIMEZONE:-UTC}
+      # Code nodes read $env.LENDLOOP_HMAC_SECRET / CONVEX_SITE_URL and use node:crypto.
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
+      # Executions hold recipient emails (PII): keep failures for debugging only,
+      # store nothing on success, and prune errors after 72 hours.
+      - EXECUTIONS_DATA_SAVE_ON_ERROR=all
+      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=none
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=72
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro # for `n8n import:workflow`
+
+volumes:
+  n8n_data:

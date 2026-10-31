@@ -1,0 +1,128 @@
+{
+  "name": "LendLoop - Error handler",
+  "id": "lendloopErrorHandler01",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "aae17b50-bebc-40fb-a040-4340a77873f2",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds an alert from execution METADATA only (no loan data, no payloads).\nconst e = $input.first().json;\nconst wfName = e.workflow && e.workflow.name;\nconst err = (e.execution && e.execution.error && e.execution.error.message) || 'unknown error';\nconst text = 'LendLoop automation FAILED: \"' + wfName + '\" execution ' + (e.execution && e.execution.id) +\n  ' at node \"' + ((e.execution && e.execution.lastNodeExecuted) || '?') + '\": ' + err.slice(0, 300) +\n  (e.execution && e.execution.url ? ' -> ' + e.execution.url : '');\nconsole.error('[LENDLOOP ERROR] ' + text); // always visible in n8n logs + execution list\nreturn [{ json: { text, content: text } }];"
+      },
+      "id": "1bef9a9b-f5d0-441e-ac3d-4f1f5688772b",
+      "name": "Format alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "adf147bd-1cdf-4f20-a2a6-7eaddc1aa7af",
+              "leftValue": "={{ $env.ALERT_WEBHOOK_URL }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b489ef35-c032-494f-a86f-eba7451730d1",
+      "name": "Alert channel configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ALERT_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text, content: $json.content }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "450e4a5c-4f9c-4dfb-a920-188010a9fe12",
+      "name": "Post to Slack/Discord webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        120
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format alert": {
+      "main": [
+        [
+          {
+            "node": "Alert channel configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert channel configured?": {
+      "main": [
+        [
+          {
+            "node": "Post to Slack/Discord webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

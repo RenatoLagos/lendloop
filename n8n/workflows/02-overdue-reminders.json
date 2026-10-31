@@ -1,0 +1,287 @@
+{
+  "name": "LendLoop - Overdue reminders",
+  "id": "lendloopOverdue0001",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "db00244c-b598-44cd-a1ae-92a42ac0a7c4",
+      "name": "Daily 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Signs the (empty-body) GET request: HMAC-SHA256(secret, `${timestamp}.`)\nconst crypto = require('crypto');\nconst secret = $env.LENDLOOP_HMAC_SECRET;\nif (!secret) throw new Error('LENDLOOP_HMAC_SECRET is not set in the n8n environment');\nconst timestamp = String(Date.now());\nconst signature = crypto.createHmac('sha256', secret).update(timestamp + '.').digest('hex');\nreturn [{ json: { timestamp, signature } }];"
+      },
+      "id": "098dc14b-7d3a-4906-ad7c-8e47f335b17f",
+      "name": "Sign GET request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.CONVEX_SITE_URL + '/n8n/overdue-loans' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "cfa05170-f867-48a7-a2f7-f19fe33c9d68",
+      "name": "Fetch overdue loans",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "loans",
+        "options": {}
+      },
+      "id": "6e22660a-602b-4c65-a6d5-22ca29bbb821",
+      "name": "Split loans",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// MOCK reminder per overdue loan, then sign the write-back body.\n// Replace the console.log with a Send Email / Slack node for real delivery; on delivery\n// failure set status to 'failed' so Convex records it (and a later run can succeed: failed -> sent).\nconst crypto = require('crypto');\nconst secret = $env.LENDLOOP_HMAC_SECRET;\nif (!secret) throw new Error('LENDLOOP_HMAC_SECRET is not set in the n8n environment');\n\n// Mask the local part so logs (and saved executions) do not hold full addresses.\nconst maskEmail = (e) => { const [u, d] = String(e).split('@'); return d ? u.slice(0, 1) + '***@' + d : '***'; };\n\nreturn $input.all().map((item) => {\n  const l = item.json;\n  console.log('[MOCK REMINDER] to=' + maskEmail(l.borrowerEmail) + ' :: \"' + l.toolName + '\" was due ' + l.endDate + ' (' + l.daysOverdue + ' day(s) overdue)');\n  const body = JSON.stringify({\n    loanId: l.loanId,\n    idempotencyKey: l.idempotencyKey, // minted by Convex: <loanId>:<YYYY-MM-DD>:overdue-reminder\n    status: 'sent',\n    detail: 'mock reminder logged',\n  });\n  const timestamp = String(Date.now());\n  const signature = crypto.createHmac('sha256', secret).update(timestamp + '.' + body).digest('hex');\n  return { json: { body, timestamp, signature } };\n});"
+      },
+      "id": "64e87ac5-18ba-415c-a5c6-243a324e94c7",
+      "name": "Mock reminder + sign",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL + '/n8n/reminder-status' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "02941379-3102-4190-a050-ab068205a98d",
+      "name": "Write back status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3e923727-cf81-43be-acfb-1735b0fd3b0b",
+              "leftValue": "={{ $json.error !== undefined }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e5109309-c6fe-4034-ad09-8148bc8f6193",
+      "name": "Write-back failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "One or more overdue-reminder write-backs failed after retries (see this execution for the failed items)."
+      },
+      "id": "b9f991fe-34cf-4199-a462-9c844f174f02",
+      "name": "Fail run",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "Daily: signed GET to Convex -> one mock reminder per overdue loan -> signed idempotent write-back (key <loanId>:<date>:overdue-reminder). HTTP nodes retry 3x. A failed write-back does not abort the run: every loan is attempted, then 'Fail run' fails the execution so the error workflow alerts. A real email provider must be idempotent per idempotencyKey, because a failed write-back means the same reminder is offered again on the next run.",
+        "width": 480,
+        "height": 150
+      },
+      "id": "2c924e30-8820-4ee7-aba6-81f72be34443",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        380
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 09:00": {
+      "main": [
+        [
+          {
+            "node": "Sign GET request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign GET request": {
+      "main": [
+        [
+          {
+            "node": "Fetch overdue loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch overdue loans": {
+      "main": [
+        [
+          {
+            "node": "Split loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split loans": {
+      "main": [
+        [
+          {
+            "node": "Mock reminder + sign",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock reminder + sign": {
+      "main": [
+        [
+          {
+            "node": "Write back status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write back status": {
+      "main": [
+        [
+          {
+            "node": "Write-back failed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write-back failed?": {
+      "main": [
+        [
+          {
+            "node": "Fail run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "lendloopErrorHandler01",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}
